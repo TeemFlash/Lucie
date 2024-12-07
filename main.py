@@ -4,19 +4,22 @@ import requests
 import time
 import re
 import random
+from openai import OpenAI
 from loreofJun import lore
 from loreofJun import random_thoughts
-#from dotenv import load_dotenv
+from dotenv import load_dotenv
 from http.server import SimpleHTTPRequestHandler, HTTPServer
 from telegram import Update
 from telegram.ext import ApplicationBuilder, MessageHandler, filters, ContextTypes
 
-# Токены
-#load_dotenv()
+# Загрузка переменных из .env файла
+load_dotenv()
 
-TELEGRAM_TOKEN = '7580851736:AAFwJYN1Jsdj2LwnaKt0rYbwkqTtP6tYBsI'
-CHATGPT_API_KEY = 'sk-NHbJXSoqrgySlxs0IjEQmHxZCnClQIUUqhhVpWb82LT3BlbkFJFGZW2-sifjC8n5hM9_iEbFNHsQJGsD-hc5sECvpccA'
-OPENAI_API_KEY = 'sk-NHbJXSoqrgySlxs0IjEQmHxZCnClQIUUqhhVpWb82LT3BlbkFJFGZW2-sifjC8n5hM9_iEbFNHsQJGsD-hc5sECvpccA'
+# Получение токенов из окружения
+TELEGRAM_TOKEN = os.getenv('TELEGRAM_TOKEN')
+CHATGPT_API_KEY = os.getenv('CHATGPT_API_KEY')
+OPENAI_API_KEY = os.getenv('OPENAI_API_KEY')
+client = OpenAI(api_key=os.environ.get("OPENAI_API_KEY"))
 
 # Глобальный словарь для хранения состояний пользователей
 user_memory = {}
@@ -111,6 +114,12 @@ def generate_image(prompt):
     except Exception as e:
         return None
 
+def stt(audio_file):
+  transcription = client.audio.transcriptions.create(
+    model="whisper-1",
+    file=audio_file
+  )
+  return transcription.text
 
 # Улучшенная функция для определения, требуется ли генерация изображения
 def requires_image_generation(text):
@@ -142,38 +151,37 @@ def extract_image_description(text):
     return "картинка"  # Возвращаем нейтральное описание, если не нашли ничего конкретного
 
 
-TRIGGER_WORDS = ["Люцифер", "Luсifer", "Lucie", "Люци", "Дьявол", "Diablo", "Ад", "Ангел"]
+TRIGGER_WORDS = ["Lucifer", "Lucie", "Devil", "Angel", "Люцифер", "Люци", "друг", "машина"]
 
-# Обработчик сообщений
+# Главный обработчик
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    if update.message and update.message.text:
-        user_message = update.message.text
+    if update.message:
         chat_id = update.message.chat_id
 
-        # Проверка на наличие триггерных слов или если бот упомянут через reply
-        if any(word in user_message.lower() for word in TRIGGER_WORDS) or \
-           (update.message.reply_to_message and update.message.reply_to_message.from_user.id == context.bot.id):
+        if update.message.text:
+            user_message = update.message.text
+            await handle_text(update, context, user_message, chat_id)
+        
 
-            # Если сообщение - ответ на сообщение бота
-            if update.message.reply_to_message and update.message.reply_to_message.from_user.id == context.bot.id:
-                user_message = update.message.text
-
-            # Проверка на необходимость генерации изображения
-            if requires_image_generation(user_message):
-                image_description = extract_image_description(user_message)  # Извлекаем описание изображения
-                image_url = generate_image(image_description)
-                if image_url:
-                    await context.bot.send_photo(chat_id=chat_id, photo=image_url)
-                else:
-                    await context.bot.send_message(chat_id=chat_id, text="Не удалось сгенерировать изображение.")
+# Обработка текстовых сообщений
+async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE, user_message: str, chat_id: int):
+    if any(word in user_message.lower() for word in TRIGGER_WORDS) or \
+       (update.message.reply_to_message and update.message.reply_to_message.from_user.id == context.bot.id):
+        if requires_image_generation(user_message):
+            image_description = extract_image_description(user_message)
+            image_url = generate_image(image_description)
+            if image_url:
+                await context.bot.send_photo(chat_id=chat_id, photo=image_url)
             else:
-                # Генерация ответа от ChatGPT
-                chatgpt_response = get_chatgpt_response(chat_id, user_message)
-                # Отправка ответа
-                await context.bot.send_message(chat_id=chat_id, text=chatgpt_response)
+                await context.bot.send_message(chat_id=chat_id, text="Не удалось сгенерировать изображение.")
+        else:
+            chatgpt_response = get_chatgpt_response(chat_id, user_message)
+            await context.bot.send_message(chat_id=chat_id, text=chatgpt_response)
 
-    else:
-        return
+async def start(update: Update, context):
+    """Приветственное сообщение при старте."""
+    await update.message.reply_text("Привет! Отправь мне аудио или голосовое сообщение.")
+
 
 def run_telegram_bot():
     application = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
